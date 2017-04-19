@@ -13,13 +13,15 @@ import cv2
 
 
 
+
 class Pedestrian(object):
     #Pedestrian class
     #__init__ constructor
     def __init__(self, identity, xA, yA, xB, yB):
         self.identity = identity
-        self.xcenter = xA + ((xB-xA)/2)
-        self.ycenter = yA + ((yB-yA)/2)
+        self.xnow = xA + ((xB-xA)/2)
+        self.ynow = yA + ((yB-yA)/2)
+        #use a threshold based of bounding box size. try implementing one later utilizing pedestrian velocity
         self.xthreshold = (xB-xA)/5
         self.ythreshold = (yB-yA)/5
     #variables needed to roughly estimate location of pedestrian in next frame
@@ -32,33 +34,55 @@ class Pedestrian(object):
     occlusionframes = 0
     #---most likely a false positive if it keeps dropping.
     drops = 0
-    #update (call after find)
+    #---update (call after find)
     def update(self):
-        if present == True:
-            self.xexpected = self.xcenter + (self.xcenter - self.xpast)
-            self.yexpected = self.ycenter + (self.ycenter - self.ypast)
-            self.xpast = self.xcenter
-            self.ypast = self.ycenter
+        if self.present == True:
+            self.xexpected = self.xnow + (self.xnow - self.xpast)
+            self.yexpected = self.ynow + (self.ynow - self.ypast)
+            self.xpast = self.xnow
+            self.ypast = self.ynow
+            #note if occluded, now should have been calculated in past frame
+            #---prep now for next frame in case if occluded
             if self.occluded == True:
-                self.xcenter = self.xexpected
-                self.ycenter = self.yexpected
+                self.xnow = self.xexpected
+                self.ynow = self.yexpected
+                #---increase threshold size to account for turning and slowing down
+                self.xthreshold = self.xthreshold + 2
+                self.ythreshold = self.ythreshold + 2
+                #note now should be within threshold of expected (linear estimation based off previous frame (no averaging))
         else:
             return
-    def fix(
+    #---try finding unique pedestrian in array of detected people 
     def find(self,ndarray):
-        if present == True:
+        if self.present == True:
+            #---for (top left corner, bottom right corner)
             for (xA, yA, xB, yB) in ndarray:
-                if (abs(xA+((xB-xA)/2) - self.xcenter) <= self.xthreshold) and (abs(yA+((yB-yA)/2) - self.ycenter) <= self.ythreshold):
-                    self.xcenter = xA+((xB-xA)/2)
-                    self.ycenter = yA+((yB-yA)/2)
+                #---if there exists a detected person in ndarray that matches the extrapolated position of pedestrian, update actual postion and threshold size
+                if (abs(xA+((xB-xA)/2) - self.xexpected) <= self.xthreshold) and (abs(yA+((yB-yA)/2) - self.yexpected) <= self.ythreshold):
+                    self.xnow = xA+((xB-xA)/2)
+                    self.ynow = yA+((yB-yA)/2)
                     self.xthreshold = (xB-xA)/5
                     self.ythreshold = (yB-yA)/5
+                    #---pedestrian no longer occluded as of this frame
                     self.occluded = False
-               else:
+                    #update the expected location for next frame
+                    self.update()
+                #else the person is probably occluded
+                else:
                     self.occluded = True
-    def match():
-        "nothing"
-
+                    self.update()
+    #remove pedestrian from being present in frame. Ideally should only occur when the extrapolated position exceeds frame boundaries(edge of persons bounding box hits edge of frame)
+    #should be called every frame
+    def checkleave(self,frame):
+        #return if person not present. personally i want this false statement instead of the execute if true for some reason
+        if self.present == False:
+            return
+        #set self.present to false once person leaves frame
+        else:
+            if ((self.xexpected+(self.xthreshold*5)) > frame.shape[1]) or ((self.xexpected-(self.xthreshold*5)) < 0) or ((self.yexpected+(self.ythreshold*5)) > frame.shape[0]) or ((self.yexpected+(self.ythreshold*5)) <0):
+                self.present = False
+            #worry about deleting people if they get occluded for too long later
+ 
 
 
 
@@ -73,6 +97,7 @@ pedprev = 0
 pednow = 0
 #---unique pedestrian detector (should correlate with size of Pedestrian array size
 who = 0
+newped = False
 #---initialize histogram of oriented gradients
 hog = cv2.HOGDescriptor()
 #---initialize people detecting svm
@@ -100,10 +125,16 @@ while True:
         cv2.putText(image, str(1), (xA, yA), font, 1, (255,255,255), 2)
     #---Show Frame
     cv2.imshow("Frame", image)
-    #---After Frame shown, can save some varialbes required for next frame
+    #---index for iterating through rects
+    for i in range(len(rects)):
+       # seems to output top left corner and bottom right corner of box
+       print("rectangle: %s\n firstindex: %s " %(rects[i], rects[i,0]))
+       i += i
+    #--- press 'Esc' to exit program early
+    print("\n")
+    #---After Frame shown, can save some varialbes required for next frame (prepare for next frame)
     pedprev = pednow
-    for index in rects:
-        print("rectangle: %s\n firstindex: %s\n " %(rects, rects[0,0]))
+    newped = False
     #--- press 'Esc' to exit program early
     k = cv2.waitKey(30) & 0xff
     if k == 27:
