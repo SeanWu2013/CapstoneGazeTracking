@@ -54,6 +54,6 @@ while True:
     cv2.imshow("After NMS", image)
     k = cv2.waitKey(30) & 0xff
     if k == ord('s'):
-        break
+        break 
 cap.release()
 cv2.destroyAllWindows()
