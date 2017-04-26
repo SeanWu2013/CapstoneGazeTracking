@@ -63,12 +63,7 @@ class Blob(object):
             self.xpast = self.xnow
             self.ypast = self.ynow
             self.framespresent = self.framespresent + 1
-            #check if blob is a person to remove false positives
-            if self.needstest == True:
-                "blank"
-                #CHECK ALGO
-                #SHOULD ALTER NEEDS TEST, IS PEDESTRIAN, CHECK FRAMES REQUIRED
-            #note if occluded, now should have been calculated in past frame
+            #note if occluded, now should have bceen calculated in past frame
             #---prep "now" position for next frame in case if occluded
             if self.occluded == True:
                 self.xnow = self.xexpected
@@ -109,7 +104,7 @@ class Blob(object):
                     self.update()
     #remove blob from being present in frame. Ideally should only occur when the extrapolated position exceeds frame boundaries(edge of blob's bounding box hits edge of frame)
     #should be called every frame
-    def check(self,frame, temp):
+    def check(self,frame):
         self.wait = self.wait - 1
         #return if person not present. personally i want this false statement instead of the execute if true for some reason
         if self.present == False or self.needstest == False:
@@ -121,19 +116,20 @@ class Blob(object):
             #bounding box of blob with some extra padding (max 20 on each side)
             xA = int(self.xnow-(self.width)/2) - 20
             if (xA - 20) <= 0:
-                xA = 0
+                xA = 1
             xB = int(self.xnow+(self.width)/2) + 20
             if (xB + 20) >= frame.shape[1]:
-                xB = frame.shape[1]
+                xB = frame.shape[1] - 1
             yA = int(self.ynow-(self.height)/2) - 20
             if  (yA - 20) <= 0:
-                yA = 0
+                yA = 1
             yB = int(self.ynow+(self.height)/2) + 20
             if (yB + 20) >= frame.shape[0]:
-                yB = frame.shape[0]
+                yB = frame.shape[0] - 1
             temp = frame[yA:yB, xA:xB]
-            #only run ped test if blob size is large enough
-            if (yB-yA) > 50 or (xB-xA) > 20:
+            #only run ped test if blob size is large enough and not too horizontally large
+            #hog detector window needs to be of minimum size or else program will crash (people can only so small anyways)
+            if ((yB-yA) > 128 and (xB-xA) > 128):#and (xB - xA) < 400:
                 #---detect pedestirans, make ndarray rects that holds top left corner and width and height of bounding box
                 (rects, weights) = hog.detectMultiScale(temp, winStride=(4, 4), padding=(8, 8), scale=1.05)
                 #---reorganize rects to hold top left and bottom right corner of bounding box (don't bother with nonmax suppression)
@@ -145,16 +141,16 @@ class Blob(object):
                         self.ispedestrian = True
                         self.needstest = False
             #if ped was not detected in time
-            if (self.framespresent > 500) and (self.checkframesrequired > 0):
+            if (self.framespresent > 200) and (self.checkframesrequired > 0):
                 #within the first 10 frames of appearing, the blob did not have a ped present. no longer need to check this blob to see if is ped
                 self.needstest = False
                 #remove from play
                 self.present = False
                 self.occluded = True
-        else:
-            if ((self.xexpected+(self.xthreshold)) >= frame.shape[1]) or ((self.xexpected-(self.xthreshold)) <= 0) or ((self.yexpected+(self.ythreshold)) >= frame.shape[0]) or ((self.yexpected+(self.ythreshold)) <= 0):
-                self.present = False
-                self.needstest = False
+    def checkleave(self,frame):
+        if ((self.xexpected+(self.xthreshold)) >= frame.shape[1]) or ((self.xexpected-(self.xthreshold)) <= 0) or ((self.yexpected+(self.ythreshold)) >= frame.shape[0]) or ((self.yexpected+(self.ythreshold)) <= 0):
+            self.present = False
+            self.needstest = False
             #---if occluded for too long, remove from being present. most likely false positive.
             #FOR NOW REMOVE BLOB IF OCCLUDED FOR TOO LONG
             #elif self.occlusionframes > 15:
@@ -169,7 +165,7 @@ upedList.append(Blob(0,0,0,0,0))
 upedList[0].identity = "null" #shouldve been done automatically but w.e.
 upedList[0].ispresent = False
 upedList[0].needstest = False
-#--number of bounding boxes in frame?
+#--number of blobs in frame?
 what = 0
 #--number of unique pedestrians detected ()
 who = 0
@@ -188,17 +184,17 @@ fgbg = cv2.createBackgroundSubtractorMOG2()
 bgimg = None
 #--list of blobs. will be an ndarray
 blobs = []
-#--list of unique blobs (try getting destroyeed asap) to attatch a ped to and help remove false positives
+#--list of unique blobs
 ublobsList = []
 ublobsList.append(Blob(0,0,0,0,0))
-ublobsList[0].identity = "0" #shouldve been done automatically but w.e.
+ublobsList[0].identity = "null" #shouldve been done automatically but w.e.
+ublobsList[0].present = False
 
 #-------------------------------------------------
 #---Initialize Camera
 #---capture video from video source. what is in () is video path. 0 is embedded webcam, 1 for usb in my case
-cap = cv2.VideoCapture(0)
+cap = cv2.VideoCapture('last0.mp4')
 #---set brightness to reduce autowhite balance. Short training time in beginning should fix that issue a bit too
-cap.set(cv2.CAP_PROP_AUTOFOCUS, 0)
 cap.set(15,-5)
 #---font for text
 font = cv2.FONT_HERSHEY_SIMPLEX
@@ -272,7 +268,7 @@ while time > 60:
         ublobsList[i].update()
         #temporary frame to cheeck for pedestrian
         temp = []
-        ublobsList[i].check(frame, temp)        
+        ublobsList[i].check(frame)
     #check for unique blob atatchments/matches (as long as they didn't move too fast) in frame
     for i in range(len(testing)):
         if testing[i] == 0:
@@ -290,13 +286,14 @@ while time > 60:
             ublobsList[i].identity = str(who)
             upedList.append(ublobsList[i])
     
-    #-------------make a separate container for present unique pedestrians later? NOTED
     #print extrapolation rectangle
-    for i in range(len(ublobsList)):
-        if ublobsList[i].present == True:
-            if ublobsList[i].identity != "null":#ispedestrian == True
-                cv2.putText(frame, ublobsList[i].identity, (int(ublobsList[i].xnow), int(ublobsList[i].ynow)), font, 1, (255,255,255),1)
-                cv2.rectangle(frame, (int(ublobsList[i].xexpected - ublobsList[i].xthreshold),int(ublobsList[i].yexpected - ublobsList[i].ythreshold)), (int(ublobsList[i].xexpected + ublobsList[i].xthreshold),int(ublobsList[i].yexpected + ublobsList[i].ythreshold)), (255, 0, 0), 2) 
+    for i in range(len(upedList)):
+        upedList[i].checkleave(frame)
+        cv2.putText(frame, upedList[i].identity, (int(upedList[i].xnow), int(upedList[i].ynow)), font, 1, (255,255,255),1)
+        if upedList[i].present == True:
+            cv2.rectangle(frame, (int(upedList[i].xexpected - upedList[i].xthreshold),int(upedList[i].yexpected - upedList[i].ythreshold)), (int(upedList[i].xexpected + upedList[i].xthreshold),int(upedList[i].yexpected + upedList[i].ythreshold)), (255, 0, 0), 2) 
+        if upedList[i].present == False:
+            cv2.rectangle(frame, (int(upedList[i].xexpected - upedList[i].xthreshold),int(upedList[i].yexpected - upedList[i].ythreshold)), (int(upedList[i].xexpected + upedList[i].xthreshold),int(upedList[i].yexpected + upedList[i].ythreshold)), (255, 0, 255), 2) 
             #show threshold box
             #elif ublobsList[i].ispedestrian == False:
                 #cv2.rectangle(frame, (int(ublobsList[i].xexpected - ublobsList[i].xthreshold),int(ublobsList[i].yexpected - ublobsList[i].ythreshold)), (int(ublobsList[i].xexpected + ublobsList[i].xthreshold),int(ublobsList[i].yexpected + ublobsList[i].ythreshold)), (255, 0, 255), 2)
@@ -311,7 +308,8 @@ while time > 60:
         if ublobsList[i].identity == "null":
             cv2.putText(backend, ublobsList[i].identity, (int(ublobsList[i].xnow), int(ublobsList[i].ynow)), font, 1, (255,255,255),1)
             cv2.rectangle(backend, (int(ublobsList[i].xexpected - ublobsList[i].xthreshold),int(ublobsList[i].yexpected - ublobsList[i].ythreshold)), (int(ublobsList[i].xexpected + ublobsList[i].xthreshold),int(ublobsList[i].yexpected + ublobsList[i].ythreshold)), (255, 0, 255), 2) 
-
+    if len(upedList) > 1:
+        print(upedList[1].present)
     
     # draw the timestamp on the frame
     #cv2.putText(frame, datetime.datetime.now().strftime("%A %d %B %Y %I:%M:%S%p"),(10, frame.shape[0] - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.35, (0, 0, 255), 1)
@@ -344,3 +342,5 @@ cv2.destroyAllWindows()
 #http://docs.opencv.org/2.4/modules/video/doc/motion_analysis_and_object_tracking.html?highlight=backgroundsubtractormog#backgroundsubtractormog-backgroundsubtractormog
 #cameraparams
 #http://stackoverflow.com/questions/11420748/setting-camera-parameters-in-opencv-python
+#some hog stuff
+#http://lear.inrialpes.fr/people/triggs/pubs/Dalal-cvpr05.pdf
